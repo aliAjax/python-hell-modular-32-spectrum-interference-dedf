@@ -41,7 +41,11 @@ def build_handler(service, static_dir):
         def _error(self, exc):
             status = getattr(exc, "status", 500)
             code = getattr(exc, "code", "internal_error")
-            self._send(status, {"error": code, "message": str(exc)})
+            body = {"error": code, "message": str(exc)}
+            latest = getattr(exc, "latest", None)
+            if latest is not None:
+                body["latest"] = latest
+            self._send(status, body)
 
         def do_GET(self):
             try:
@@ -52,12 +56,16 @@ def build_handler(service, static_dir):
                     return self._send(200, service.state())
                 if path == "/api/items":
                     return self._send(200, {"items": service.list_items()})
+                if path == "/api/occupancy":
+                    return self._send(200, {"occupancy": service.seat_ledger(), "seats": service.seat_state()})
                 parts = [part for part in path.split("/") if part]
                 if len(parts) == 3 and parts[:2] == ["api", "items"]:
                     return self._send(200, service.get_item(int(parts[2])))
                 if len(parts) == 4 and parts[:2] == ["api", "items"] and parts[3] == "audit":
                     item = service.get_item(int(parts[2]))
                     return self._send(200, {"events": item["audit"]})
+                if len(parts) == 4 and parts[:2] == ["api", "items"] and parts[3] == "seat":
+                    return self._send(200, {"seat": service.seat_occupancy(int(parts[2]))})
                 if path == "/":
                     file_path = os.path.join(static_dir, "index.html")
                     with open(file_path, "rb") as handle:
@@ -80,6 +88,12 @@ def build_handler(service, static_dir):
                     return self._send(201, service.create_item(payload, actor, role, region))
                 if len(parts) == 4 and parts[:2] == ["api", "items"] and parts[3] == "sources":
                     return self._send(201, service.add_source(int(parts[2]), payload, actor, role, region))
+                if len(parts) == 4 and parts[:2] == ["api", "items"] and parts[3] == "seat":
+                    return self._send(200, service.apply_seat(int(parts[2]), payload, actor, role, region))
+                if len(parts) == 5 and parts[:2] == ["api", "items"] and parts[3] == "seat" and parts[4] == "confirm":
+                    return self._send(200, service.confirm_seat(int(parts[2]), actor, role))
+                if len(parts) == 5 and parts[:2] == ["api", "items"] and parts[3] == "seat" and parts[4] == "withdraw":
+                    return self._send(200, service.withdraw_unauthorized(int(parts[2]), payload, actor, role))
                 if len(parts) == 4 and parts[:2] == ["api", "items"] and parts[3] == "actions":
                     action = payload.pop("action", "")
                     if not action:

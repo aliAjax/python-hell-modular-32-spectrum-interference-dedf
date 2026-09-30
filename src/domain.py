@@ -1,4 +1,23 @@
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+
+
+# 协调席位（共用占用账）的容量与占位时长。席位为全局共享资源，
+# 干扰事件、协调席位与停用授权共用同一本占用账。
+SEAT_CAPACITY = 3
+SEAT_HOLD_SECONDS = 2 * 60 * 60
+
+# 紧急等级优先级：数字越大越优先。同级按提交先后（占用账序号）占位。
+URGENCY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+
+
+def urgency_rank(level):
+    if not isinstance(level, str):
+        return URGENCY_RANK["low"]
+    return URGENCY_RANK.get(level.strip().lower(), URGENCY_RANK["low"])
+
+
+def now_iso():
+    return datetime.now(timezone.utc).isoformat()
 
 
 class DomainError(Exception):
@@ -70,6 +89,35 @@ def normalize_create(payload):
         "suspend_authorization": None,
         "_stable_key": stable_key,
     }
+
+
+def hold_expires_at(occupied_iso, seconds=None):
+    """占位到期时间：用于给候补事件估计最早释放时间。占位本身不会自动释放。"""
+    seconds = SEAT_HOLD_SECONDS if seconds is None else seconds
+    try:
+        base = datetime.fromisoformat(occupied_iso.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        base = datetime.now(timezone.utc)
+    return (base + timedelta(seconds=seconds)).isoformat()
+
+
+def urgency_of(payload):
+    """从事件 payload 的评估结果取紧急等级，返回 (rank, level)。"""
+    level = None
+    if isinstance(payload, dict):
+        assessment = payload.get("assessment") or {}
+        if isinstance(assessment, dict):
+            level = assessment.get("level")
+    rank = urgency_rank(level)
+    name = level if isinstance(level, str) and level.strip() else "low"
+    return rank, name
+
+
+def normalize_seat_apply(payload):
+    authorization = require_text(payload, "authorization_code")
+    if not authorization.startswith("REG-"):
+        raise DomainError("invalid_authorization", "停用授权编号无效", 403)
+    return {"authorization_code": authorization}
 
 
 def normalize_source(payload):

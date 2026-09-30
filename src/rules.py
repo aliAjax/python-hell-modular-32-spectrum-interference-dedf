@@ -1,6 +1,6 @@
 import math
 
-from .domain import DomainError
+from .domain import DomainError, urgency_rank, URGENCY_RANK
 
 ENTITY_TYPE = "spectrum_interference"
 INITIAL_STATUS = "pending"
@@ -34,6 +34,22 @@ def assess(payload):
         level = "low"
     score = round(max(0.0, min(100.0, 100.0 + impact)), 2)
     return {"score": score, "level": level, "impact_value": round(impact, 2)}
+
+
+def urgency_level(payload):
+    """紧急等级：取评估等级，缺省为 low。用于占用账的优先级排序。"""
+    level = None
+    if isinstance(payload, dict):
+        assessment = payload.get("assessment")
+        if isinstance(assessment, dict):
+            level = assessment.get("level")
+    if not isinstance(level, str) or level.strip().lower() not in URGENCY_RANK:
+        return "low"
+    return level.strip().lower()
+
+
+def is_waitlisted(occupancy):
+    return bool(occupancy) and occupancy.get("status") == "waitlisted"
 
 
 def _need_status(item, allowed):
@@ -106,7 +122,7 @@ def apply_action(item, action, payload, actor, role):
         return "resolved", current, {"evidence": current["resolution"]["evidence"]}
 
     if action == "cancel":
-        _need_status(item, {"pending", "assessed"})
+        _need_status(item, {"pending", "assessed", "located", "suspended", "coordinating"})
         reason = _text(payload, "reason")
         current["cancellation"] = {"reason": reason, "actor": actor}
         return "cancelled", current, {"reason": reason}
