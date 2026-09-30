@@ -37,10 +37,10 @@ class FailureTest(unittest.TestCase):
         item = self.service.act(item["id"], "assess", {}, "m", "monitor", item["version"])
         item = self.service.act(item["id"], "locate", {"location": "x", "confidence": 0.8}, "f", "field_operator", item["version"])
         with self.assertRaises(DomainError) as forbidden:
-            self.service.act(item["id"], "suspend", {"authorization_code": "REG-X"}, "f", "field_operator", item["version"], "west")
+            self.service.apply_occupancy(item["id"], {"authorization_code": "REG-X"}, "f", "field_operator", "west")
         self.assertEqual(forbidden.exception.status, 403)
         with self.assertRaises(DomainError) as mismatch:
-            self.service.act(item["id"], "suspend", {"authorization_code": "REG-X"}, "c", "coordinator", item["version"], "east")
+            self.service.apply_occupancy(item["id"], {"authorization_code": "REG-X"}, "c", "coordinator", "east")
         self.assertEqual(mismatch.exception.code, "region_mismatch")
 
     def test_measurement_revision_preserves_original_and_version_conflict(self):

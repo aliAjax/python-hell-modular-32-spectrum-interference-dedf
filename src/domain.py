@@ -9,8 +9,9 @@ class DomainError(Exception):
 
 
 class ConflictError(DomainError):
-    def __init__(self, code, message):
+    def __init__(self, code, message, details=None):
         super().__init__(code, message, 409)
+        self.details = details
 
 
 class NotFoundError(DomainError):
@@ -89,3 +90,40 @@ def normalize_source(payload):
         "station_id": payload.get("station_id"),
         "frequency_mhz": payload.get("frequency_mhz"),
     }
+
+
+URGENCY_LEVELS = ("critical", "high", "medium", "low")
+URGENCY_RANK = {level: index for index, level in enumerate(URGENCY_LEVELS)}
+
+
+def urgency_of(payload):
+    """紧急等级取评估结果，未评估的事件按最低等级排队。"""
+    assessment = payload.get("assessment") or {}
+    level = assessment.get("level")
+    return level if level in URGENCY_RANK else "low"
+
+
+def normalize_apply(payload):
+    authorization = require_text(payload, "authorization_code")
+    if not authorization.startswith("REG-"):
+        raise DomainError("invalid_authorization", "停用授权编号无效", 403)
+    seat = payload.get("seat")
+    if seat is not None:
+        seat = str(seat).strip() or None
+    expected_release_at = payload.get("expected_release_at")
+    if expected_release_at is not None:
+        if not isinstance(expected_release_at, str) or not expected_release_at.strip():
+            raise DomainError("invalid_timestamp", "expected_release_at 必须是 ISO 时间")
+        expected_release_at = expected_release_at.strip()
+        try:
+            datetime.fromisoformat(expected_release_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise DomainError("invalid_timestamp", "expected_release_at 必须是 ISO 时间")
+    return {"authorization_code": authorization, "seat": seat, "expected_release_at": expected_release_at}
+
+
+def normalize_confirm(payload):
+    seat = payload.get("seat")
+    if seat is not None:
+        seat = str(seat).strip() or None
+    return {"seat": seat}

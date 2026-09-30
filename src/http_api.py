@@ -2,7 +2,7 @@ import json
 import mimetypes
 import os
 from http.server import BaseHTTPRequestHandler
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 from .domain import DomainError
 
@@ -41,11 +41,16 @@ def build_handler(service, static_dir):
         def _error(self, exc):
             status = getattr(exc, "status", 500)
             code = getattr(exc, "code", "internal_error")
-            self._send(status, {"error": code, "message": str(exc)})
+            body = {"error": code, "message": str(exc)}
+            details = getattr(exc, "details", None)
+            if details is not None:
+                body["details"] = details
+            self._send(status, body)
 
         def do_GET(self):
             try:
                 path = urlparse(self.path).path
+                query = parse_qs(urlparse(self.path).query)
                 if path == "/health":
                     return self._send(200, {"status": "ok"})
                 if path == "/api/state":
@@ -58,6 +63,15 @@ def build_handler(service, static_dir):
                 if len(parts) == 4 and parts[:2] == ["api", "items"] and parts[3] == "audit":
                     item = service.get_item(int(parts[2]))
                     return self._send(200, {"events": item["audit"]})
+                if len(parts) == 4 and parts[:2] == ["api", "items"] and parts[3] == "occupancy":
+                    return self._send(200, service.get_occupancy(int(parts[2])))
+                if path == "/api/seats":
+                    region = query.get("region", [None])[0]
+                    return self._send(200, service.seats_overview(region))
+                if path == "/api/occupancy/operations":
+                    return self._send(200, {"operations": service.repository.list_open_operations()})
+                if len(parts) == 4 and parts[:3] == ["api", "occupancy", "operations"]:
+                    return self._send(200, service.resume_occupancy(parts[3], actor, role, region))
                 if path == "/":
                     file_path = os.path.join(static_dir, "index.html")
                     with open(file_path, "rb") as handle:
@@ -86,6 +100,25 @@ def build_handler(service, static_dir):
                         raise DomainError("action_required", "缺少 action", 400)
                     expected = payload.pop("expected_version", None)
                     return self._send(200, service.act(int(parts[2]), action, payload, actor, role, expected, region))
+                # 统一占用账：申请 / 确认 / 释放 / 越权撤回
+                if len(parts) == 4 and parts[:2] == ["api", "items"] and parts[3] == "occupancy":
+                    occupancy_action = payload.pop("occupancy_action", "")
+                    if occupancy_action == "apply":
+                        return self._send(201, service.apply_occupancy(int(parts[2]), payload, actor, role, region))
+                    if occupancy_action == "confirm":
+                        expected = payload.pop("expected_version", None)
+                        return self._send(200, service.confirm_occupancy(int(parts[2]), payload, actor, role, region, expected))
+                    if occupancy_action == "release":
+                        return self._send(200, service.release_occupancy(int(parts[2]), payload, actor, role, region))
+                    if occupancy_action == "revoke":
+                        return self._send(200, service.revoke_occupancy(int(parts[2]), payload, actor, role, region))
+                    raise DomainError("action_required", "缺少 occupancy_action: apply/confirm/release/revoke", 400)
+                if path == "/api/seats/capacity":
+                    seat_region = str(payload.get("region", "")).strip()
+                    if not seat_region:
+                        raise DomainError("field_required", "region 不能为空")
+                    return self._send(200, service.set_pool_capacity(
+                        seat_region, payload.get("capacity", 0), actor, role))
                 return self._send(404, {"error": "not_found", "message": "接口不存在"})
             except DomainError as exc:
                 return self._error(exc)

@@ -1,5 +1,100 @@
-<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>无线电频谱干扰调查</title><body><h1>无线电频谱干扰调查与协调</h1><p>使用 JSON API 创建干扰事件、记录来源、定位和执行处置动作。</p><pre>GET /health
-GET /api/state
-POST /api/items
-POST /api/items/{id}/sources
-POST /api/items/{id}/actions</pre></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>无线电频谱干扰调查与协调</title>
+<style>
+  body { font-family: system-ui, "Segoe UI", sans-serif; margin: 24px; color: #1c2733; }
+  h1 { font-size: 20px; }
+  .pool { border: 1px solid #d3dbe3; border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; }
+  .pool h2 { font-size: 16px; margin: 0 0 8px; }
+  .stat { display: inline-block; margin-right: 18px; font-size: 14px; }
+  .stat b { font-size: 18px; }
+  .ok { color: #1a7f37; } .warn { color: #b35900; } .full { color: #c02d2d; }
+  table { border-collapse: collapse; width: 100%; margin-top: 10px; font-size: 13px; }
+  th, td { border: 1px solid #e2e7ec; padding: 5px 8px; text-align: left; }
+  th { background: #f4f7fa; }
+  .state-held { color: #b35900; } .state-confirmed, .state-coordinating { color: #1a7f37; font-weight: 600; }
+  .state-waiting { color: #c02d2d; font-weight: 600; }
+  .muted { color: #6b7785; }
+  code { background: #f4f7fa; padding: 1px 4px; border-radius: 4px; }
+  #err { color: #c02d2d; }
+</style>
+</head>
+<body>
+<h1>无线电频谱干扰调查与协调 — 协调席位占用账</h1>
+<p class="muted">
+  干扰事件、协调席位、停用授权共用一本占用账：按紧急等级优先、同级按提交先后占位；
+  满员后候补，并给出最早释放时间。确认后授权才生效。
+</p>
+<div id="err"></div>
+<div id="pools">加载中…</div>
+
+<h2>接口</h2>
+<pre>GET  /health
+GET  /api/state
+GET  /api/seats?region=north                 席位余量 / 候补 / 阻塞原因 / 最早释放时间
+POST /api/items                              创建干扰事件
+POST /api/items/{id}/sources                 来源记录
+POST /api/items/{id}/actions                 assess / locate / coordinate / resolve / cancel
+POST /api/items/{id}/occupancy               {"occupancy_action":"apply|confirm|release|revoke", ...}
+GET  /api/items/{id}/occupancy               该事件当前占用（旧事件按未占用读取）
+GET  /api/occupancy/operations               未完成的占用操作（可重试）
+GET  /api/occupancy/operations/{opId}        续跑未完成操作：重试不重复占位和审计
+POST /api/seats/capacity                     监管员调整席位容量 {"region","capacity"}</pre>
+
+<script>
+function stateClass(s){ return "state-" + s; }
+function esc(s){ return String(s == null ? "" : s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+function row(active){
+  return "<tr>" +
+    "<td>#" + active.item_id + (active.station_id ? " (" + esc(active.station_id) + ")" : "") + "</td>" +
+    "<td class='" + stateClass(active.state) + "'>" + esc(active.state) + "</td>" +
+    "<td>" + esc(active.seat || "-") + "</td>" +
+    "<td>" + esc(active.urgency) + "</td>" +
+    "<td>" + esc(active.authorization_code) + "</td>" +
+    "<td>" + esc(active.expected_release_at || "-") + "</td>" +
+    "<td class='muted'>" + esc(active.item_status) + "</td>" +
+    "</tr>";
+}
+
+function waitRow(w){
+  return "<tr>" +
+    "<td>#" + w.item_id + (w.station_id ? " (" + esc(w.station_id) + ")" : "") + "</td>" +
+    "<td>" + esc(w.urgency) + "</td>" +
+    "<td>#" + w.waiting_ahead + "</td>" +
+    "<td>" + esc(w.earliest_release_at || "-") + "</td>" +
+    "<td>" + esc(w.blocked_reason || "") + "</td>" +
+    "</tr>";
+}
+
+function poolHtml(p){
+  var cls = p.remaining === 0 ? "full" : (p.remaining < p.capacity ? "warn" : "ok");
+  var active = p.active.map(row).join("");
+  var waiting = p.waiting.map(waitRow).join("");
+  return "<div class='pool'>" +
+    "<h2>区域 " + esc(p.region) + "</h2>" +
+    "<span class='stat'>席位余量 <b class='" + cls + "'>" + p.remaining + "</b> / " + p.capacity + "</span>" +
+    "<span class='stat'>占用 <b>" + p.occupied + "</b></span>" +
+    "<span class='stat'>候补 <b class='" + (p.waiting.length ? "full" : "ok") + "'>" + p.waiting.length + "</b></span>" +
+    "<span class='stat'>最早释放时间 <b>" + esc(p.earliest_release_at || "—") + "</b></span>" +
+    "<table><thead><tr><th>事件</th><th>占用状态</th><th>席位</th><th>紧急等级</th><th>停用授权</th><th>预计释放</th><th>事件状态</th></tr></thead>" +
+    "<tbody>" + (active || "<tr><td colspan='7' class='muted'>暂无占用</td></tr>") + "</tbody></table>" +
+    "<table><thead><tr><th>候补事件</th><th>紧急等级</th><th>前方候补</th><th>最早释放时间</th><th>阻塞原因</th></tr></thead>" +
+    "<tbody>" + (waiting || "<tr><td colspan='5' class='muted'>暂无候补</td></tr>") + "</tbody></table>" +
+    "</div>";
+}
+
+function load(){
+  fetch("/api/seats").then(r => r.json()).then(data => {
+    var pools = data.pools || [data];
+    document.getElementById("pools").innerHTML = pools.length ? pools.map(poolHtml).join("")
+      : "<p class='muted'>暂无任何区域的席位池（发起一次申请即自动建池，默认容量 3，监管员可调整）。</p>";
+  }).catch(e => { document.getElementById("err").textContent = "加载失败：" + e; });
+}
+load();
+setInterval(load, 5000);
+</script>
+</body>
+</html>

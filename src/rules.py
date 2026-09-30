@@ -9,15 +9,14 @@ SOURCE_ROLES = {"analyst", "monitor", "field_operator"}
 ACTION_ROLES = {
     "assess": {"analyst", "monitor"},
     "locate": {"field_operator", "analyst"},
-    "suspend": {"coordinator", "regulator"},
     "coordinate": {"coordinator"},
     "resolve": {"coordinator", "regulator"},
     "correct_measurement": {"analyst", "monitor"},
     "cancel": {"coordinator"},
 }
 ENFORCE_REGION = True
-REGION_SENSITIVE_ACTIONS = {"suspend", "coordinate", "resolve", "cancel"}
-ACTION_REQUIRES_VERSION = {"suspend", "coordinate", "resolve", "cancel"}
+REGION_SENSITIVE_ACTIONS = {"coordinate", "resolve", "cancel"}
+ACTION_REQUIRES_VERSION = {"coordinate", "resolve", "cancel"}
 
 
 def assess(payload):
@@ -83,14 +82,6 @@ def apply_action(item, action, payload, actor, role):
         current["location"] = {"label": location, "confidence": confidence}
         return "located", current, {"location": current["location"]}
 
-    if action == "suspend":
-        _need_status(item, {"located", "suspended"})
-        authorization = _text(payload, "authorization_code")
-        if not authorization.startswith("REG-"):
-            raise DomainError("invalid_authorization", "停用授权编号无效", 403)
-        current["suspend_authorization"] = authorization
-        return "suspended", current, {"authorization_code": authorization}
-
     if action == "coordinate":
         _need_status(item, {"suspended"})
         agreement = _text(payload, "coordination_agreement")
@@ -106,9 +97,9 @@ def apply_action(item, action, payload, actor, role):
         return "resolved", current, {"evidence": current["resolution"]["evidence"]}
 
     if action == "cancel":
-        _need_status(item, {"pending", "assessed"})
+        _need_status(item, {"pending", "assessed", "located"})
         reason = _text(payload, "reason")
         current["cancellation"] = {"reason": reason, "actor": actor}
         return "cancelled", current, {"reason": reason}
 
-    raise DomainError("unknown_action", "不支持的操作")
+    raise DomainError("unknown_action", "不支持的操作；停用授权请使用 /occupancy/apply 与 /occupancy/confirm")
